@@ -1,58 +1,139 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <iostream>
+#include <sstream>
 
 using namespace cv;
 using namespace std;
 
+string inputName = "intest_ferro"; // inputName.avi, an uncompressed avi
+string codec = "MPEG";
 
-CvCapture * capture = 0;
-IplImage * img = 0; // image for getting the frame from the video
+CvCapture * capture = 0; // input video stream
+VideoWriter writer; // output video stream
+
+
+IplImage * currentFrame = 0; // image for getting the frame from the video
+IplImage * previousFrame = 0; // image for getting the frame from the video
+IplImage * differenceFrame = 0; // image for getting the frame from the video
+
+int frameH;
+int frameW;
+int fps;
 int nFrames;
 
+int currentOutput = 0; // just an index to output multiple videos
+int frameCount = 0; // current number of frames in output video
+int targetLength = 40; // target number of frames in the shot
 
-void getNextFrame()
+string outputName()
+{
+	stringstream ss;
+	ss<<inputName<<"_out_"<<currentOutput<<".avi";
+	return ss.str();
+}
+
+void getFrame()
 {
 	if(!cvGrabFrame(capture))
 		return;          // capture a frame
-	img = cvRetrieveFrame(capture);  // retrieve the captured frame
+	currentFrame = cvRetrieveFrame(capture);  // retrieve the captured frame
 	return;
+}
+
+void initWriter()
+{
+	//writer = cvCreateVideoWriter(outputName().c_str(),CV_FOURCC(codec[0],codec[1],codec[2],codec[3]), fps,cvSize(frameW,frameH),1);
+	writer.open(outputName(),0,fps,cvSize(frameW,frameH),1);
+	// codec "-1" creates a popup with available options
+	//http://docs.opencv.org/doc/tutorials/highgui/video-write/video-write.html
+	//http://docs.opencv.org/modules/highgui/doc/reading_and_writing_images_and_video.html
+	//http://www.fourcc.org/codecs.php
+
+}
+
+void destroyWriter()
+{
+	//cvReleaseVideoWriter(&writer); // make sure you release it, or it wont finish writing the file
+	writer.release();
 }
 
 void init()
 {
-	string inputName = "intest_ferro.avi";
-	capture = cvCaptureFromAVI(inputName.c_str());
+	capture = cvCaptureFromAVI((inputName+".avi").c_str());
 
-	cvQueryFrame(capture); // this call is necessary to get correct capture properties
-	int frameH    = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT); // get height
-	int frameW    = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH); // get width
-	int fps = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FPS); // get fps for output
+	currentFrame = cvQueryFrame(capture); // Grab and retrieve first frame
+
+	frameH = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT); // get height
+	frameW = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH); // get width
+	fps = (int) cvGetCaptureProperty(capture, CV_CAP_PROP_FPS); // get fps for output
 	nFrames = (int) cvGetCaptureProperty(capture,  CV_CAP_PROP_FRAME_COUNT); //CAREFUL, might not work
-		//bgimg = cvLoadImage(bgName.c_str(),CV_LOAD_IMAGE_COLOR);
+
+	previousFrame = cvCreateImage( cvSize( currentFrame->width, currentFrame->height ), currentFrame->depth, currentFrame->nChannels );
+	differenceFrame = cvCreateImage( cvSize( currentFrame->width, currentFrame->height ), currentFrame->depth, currentFrame->nChannels );
+	
+	initWriter();
+	writer.write(currentFrame);
+	//cvWriteFrame(writer,currentFrame); // write first frame
+
 }
 
 void viewVideo()
 {
 	init();
 
-	for(int i=0;i<nFrames;i++)
+	for(int i=1;i<nFrames;i++)
 	{
 		// Read next frame and convert
-		getNextFrame();
+		cvCopy(currentFrame,previousFrame,NULL);
+		getFrame();
+		frameCount++;
 
 		// Do all the fun stuff
-		//processFrame();
+		cvAbsDiff(previousFrame,currentFrame,differenceFrame); // First take the difference
+		CvScalar frameSum = cvSum(differenceFrame); // sums each pixel per channel
 
-		// Wait for a keystroke so you can view the frame
-		cvShowImage("currentFrame", img);
-		cvWaitKey(0);
+		// add each channel sum and divide by number of pixels
+		double differenceValue = (frameSum.val[0]+frameSum.val[1]+frameSum.val[2])/(currentFrame->width*currentFrame->height);
+		cout<<differenceValue<<endl;
+
+		//cvShowImage("currentFrame", differenceFrame); // Show a frame
+		//cvWaitKey(1); // Wait 1ms
+
+		bool isCut = differenceValue>100; // 100 is a good value in my test video
+
+		if(isCut){
+			if(frameCount==targetLength)
+				currentOutput++;
+			frameCount=0;
+			destroyWriter();
+			initWriter();	
+		}
+
+		if(frameCount<targetLength){
+			//<<"write frame: "<<frameCount<<endl;
+			writer.write(currentFrame);
+			//cvWriteFrame(writer,currentFrame);
+		}
 
 	}
 
-	cvDestroyWindow("currentFrame");
+	//cvWaitKey(0); // wait at the end unteill you press a key
+	//cvDestroyWindow("currentFrame");
+	
+	
 	cvReleaseCapture(&capture);
+	destroyWriter();
 
+	cout<<"framecount "<<frameCount<<endl;
+	// delete the last output file, unless the last shot is the target frame length
+	if(frameCount!=targetLength-1)
+		remove( outputName().c_str() );
+		//cerr<< "Error deleting file" ;
+
+
+	//char wait;
+	//cin>>wait;
 
 
 }
@@ -75,11 +156,7 @@ void testLOL()
 
 int main( int argc, char** argv )
 {
-    /*if( argc != 2)
-    {
-     cout <<" Usage: display_image ImageToLoadAndDisplay" << endl;
-     return -1;
-    }*/
+
 	viewVideo();
    
     return 0;
